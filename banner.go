@@ -30,5 +30,5 @@ func printBanner() {
 	}
 
 	fmt.Printf("%s  %sFast Technology Fingerprinting & CVE Discovery Engine%s\n", ColorSubtext, ColorBold, ColorReset)
-	fmt.Printf("%s  %sVersion: %sv1.2.0 %s│%s Created by %st-onix%s\n\n", ColorSubtext, ColorBlue, ColorGreen, ColorBlue, ColorSubtext, ColorMauve+ColorBold, ColorReset)
+	fmt.Printf("%s  %sVersion: %sv1.2.0 %s│%s Created by %sT-Onix%s\n\n", ColorSubtext, ColorBlue, ColorGreen, ColorBlue, ColorSubtext, ColorMauve+ColorBold, ColorReset)
 }
