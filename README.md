@@ -17,7 +17,7 @@
 
 **SNARE** is a high-performance reconnaissance tool built in Go, designed specifically for security researchers and bug bounty hunters. It automatically probes target domains to identify running technologies, web servers, and framework versions, then cross-references them against indexed CVE vulnerability databases to highlight potential attack surfaces.
 
-### 🎨 Visual Preview
+### Visual Preview
 
 ```text
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -34,27 +34,25 @@
 
 ### Features
 
-Smart Probe & HTTP Transport
+- Smart Probe & HTTP Transport
+    Accepts bare domain names, standard HTTP/HTTPS URLs, or IP addresses
+    Performs automatic protocol fallback (tries HTTPS first with SSL verification disabled, falling back to HTTP if needed)
+    Operates asynchronously using a concurrent worker pool for maximum speed
 
-    Accepts bare domain names, standard HTTP/HTTPS URLs, or IP addresses.
-    Performs automatic protocol fallback (tries HTTPS first with SSL verification disabled, falling back to HTTP if needed).
-    Operates asynchronously using a concurrent worker pool for maximum speed.
-
-### Technology Fingerprinting Engine
-
-Leverages projectdiscovery/wappalyzergo for high-speed pattern matching.
-Analyzes HTTP response headers, cookies, HTML bodies, and meta tags.
-Extracts exact version numbers when exposed
+- Technology Fingerprinting Engine
+    Leverages projectdiscovery/wappalyzergo for high-speed pattern matching.
+    Analyzes HTTP response headers, cookies, HTML bodies, and meta tags.
+    Extracts exact version numbers when exposed
 
 ### Installation
 
-Go Install (Recommended)
+- Go Install (Recommended)
 
 ```bash
 go install github.com/t-onix/snare@latest
 ```
 
-Build from Source
+- Build from Source
 
 ```bash
 git clone https://github.com/t-onix/snare.git
@@ -86,7 +84,7 @@ Flags:
 
 ### Examples
 
-Single Target Scan
+- Single Target Scan
 
 ```bash
 snare -d example.com
@@ -94,13 +92,13 @@ Or
 echo target.com | snare
 ```
 
-Multi-threaded Scan from File & Save Output
+- Multi-threaded Scan from File & Save Output
 
 ```bash
 snare -f hosts.txt -c 25 -o results.txt
 ```
 
-Pipeline Integration
+- Pipeline Integration
 
 ```bash
 subfinder -d target.com -silent | httprobe | ./snare -c 30 -o live_cves.txt
