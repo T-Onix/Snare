@@ -95,13 +95,13 @@ echo target.com | snare
 - Multi-threaded Scan from File & Save Output
 
 ```bash
-snare -f hosts.txt -c 25 -o results.txt
+snare -f hosts -c 25 -o results
 ```
 
 - Pipeline Integration
 
 ```bash
-subfinder -d target.com -silent | httprobe | ./snare -c 30 -o live_cves.txt
+subfinder -d target.com -silent | httprobe | snare -c 30 -o results
 ```
 
 ### Contributing
