@@ -12,13 +12,16 @@ import (
 func main() {
 	singleDomain := flag.String("d", "", "Single target domain or URL")
 	filePath := flag.String("f", "", "File containing list of targets")
-	outputPath := flag.String("o", "", "File to save raw results (without UI elements)")
+	manualTech := flag.String("t", "", "Manual technology & version lookup (e.g. nextjs:1.2.3 or apache:2.4.49)")
+	outputPath := flag.String("o", "", "File to save raw results")
+	jsonOutput := flag.Bool("json", false, "Output results as structured JSON lines")
 	concurrency := flag.Int("c", 10, "Number of concurrent workers")
 	noBanner := flag.Bool("no-banner", false, "Disable startup ASCII banner")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "SNARE - Web Technology Fingerprinting & CVE Discovery Engine\n")
-		fmt.Fprintf(os.Stderr, "\nUsage:\n")
+		fmt.Fprintf(os.Stderr, "Created by t-onix\n\n")
+		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  snare [flags]\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
@@ -26,7 +29,12 @@ func main() {
 
 	flag.Parse()
 
-	if !*noBanner {
+	if *jsonOutput {
+		setJSONMode(true)
+	}
+
+	// Print ASCII banner only if not suppressed and not in JSON mode
+	if !*noBanner && !*jsonOutput {
 		printBanner()
 	}
 
@@ -41,6 +49,14 @@ func main() {
 	if err := initScanner(); err != nil {
 		fmt.Fprintf(os.Stderr, "[-] Failed to initialize scanner engine: %v\n", err)
 		os.Exit(1)
+	}
+
+	if *manualTech != "" {
+		items := strings.Split(*manualTech, ",")
+		for _, item := range items {
+			processManualTech(strings.TrimSpace(item))
+		}
+		return
 	}
 
 	targetsChan := make(chan string, 100)

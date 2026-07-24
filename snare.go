@@ -15,8 +15,8 @@ import (
 )
 
 type TechMatch struct {
-	Name    string
-	Version string
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
 }
 
 type CVEInfo struct {
@@ -25,8 +25,8 @@ type CVEInfo struct {
 }
 
 type TechResult struct {
-	Tech TechMatch
-	CVEs []CVEInfo
+	Tech TechMatch `json:"tech"`
+	CVEs []CVEInfo `json:"cves,omitempty"`
 }
 
 var (
@@ -84,6 +84,26 @@ func initScanner() error {
 	var err error
 	wappalyzerClient, err = wappalyzer.New()
 	return err
+}
+
+func processManualTech(rawInput string) {
+	rawInput = strings.TrimSpace(rawInput)
+	if rawInput == "" {
+		return
+	}
+
+	tech := parseTechVersion(rawInput)
+	if tech.Name == "" {
+		return
+	}
+
+	res := TechResult{Tech: tech}
+	if tech.Version != "" {
+		res.CVEs = resolveVulnerabilities(tech.Name, tech.Version)
+	}
+
+	targetLabel := fmt.Sprintf("MANUAL LOOKUP [%s]", rawInput)
+	renderTargetCard(targetLabel, []TechResult{res})
 }
 
 func processTarget(rawTarget string) {

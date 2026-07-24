@@ -44,6 +44,8 @@
     Analyzes HTTP response headers, cookies, HTML bodies, and meta tags.
     Extracts exact version numbers when exposed
 
+- Manual Technology Queries: Accepts manual tech:version entries directly to search CVEs without sending network traffic to a host
+
 ### Installation
 
 - Go Install (Recommended)
@@ -80,6 +82,8 @@ Flags:
     	Disable startup ASCII banner
   -o string
     	File to save raw results (without UI elements)
+  -t string
+    	Manual technology & version lookup (e.g. nextjs:1.2.3 or apache:2.4.49)
 ```
 
 ### Examples
@@ -102,6 +106,41 @@ snare -f hosts -c 25 -o results
 
 ```bash
 subfinder -d target.com -silent | httprobe | snare -c 30 -o results
+```
+
+- Manual Technology Lookup
+
+```bash
+snare -t "nextjs:1.2.3,apache:2.4.49,openssl:1.0.1f"
+```
+
+- JSON Output Format
+
+```bash
+snare -d example.com -json | jq
+```
+
+- JSON Output structure:
+
+```json
+{
+  "target": "https://example.com",
+  "timestamp": "2026-07-24T15:33:50Z",
+  "technologies": [
+    {
+      "tech": {
+        "name": "apache",
+        "version": "2.4.49"
+      },
+      "cves": [
+        {
+          "id": "CVE-2021-41773",
+          "summary": "Path traversal and remote code execution in Apache 2.4.49"
+        }
+      ]
+    }
+  ]
+}
 ```
 
 ### Contributing

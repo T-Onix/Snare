@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Catppuccin 24-bit TrueColor ANSI Escape Codes
@@ -19,11 +21,22 @@ const (
 	ColorSubtext = "\x1b[38;2;166;173;200m"
 )
 
+type TargetResult struct {
+	Target       string       `json:"target"`
+	Timestamp    string       `json:"timestamp"`
+	Technologies []TechResult `json:"technologies"`
+}
+
 var (
 	stdoutMutex sync.Mutex
 	outputFile  *os.File
 	ansiRegex   = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	isJSONMode  bool
 )
+
+func setJSONMode(enabled bool) {
+	isJSONMode = enabled
+}
 
 func initOutputFile(path string) error {
 	if path == "" {
@@ -44,6 +57,14 @@ func closeOutputFile() {
 }
 
 func renderTargetCard(targetURL string, results []TechResult) {
+	stdoutMutex.Lock()
+	defer stdoutMutex.Unlock()
+
+	if isJSONMode {
+		renderJSONOutput(targetURL, results)
+		return
+	}
+
 	const boxWidth = 110
 	const innerWidth = boxWidth - 4
 
@@ -134,15 +155,38 @@ func renderTargetCard(targetURL string, results []TechResult) {
 	// Bottom Border
 	box.WriteString(border + "╰" + strings.Repeat("─", boxWidth-2) + "╯" + ColorReset + "\n")
 
-	// Atomically print card and save clean result to file
-	stdoutMutex.Lock()
-	defer stdoutMutex.Unlock()
-
 	fmt.Print(box.String())
 
 	if outputFile != nil {
 		rawBlock := strings.Join(rawLines, "\n") + "\n\n"
 		outputFile.WriteString(rawBlock)
+	}
+}
+
+func renderJSONOutput(targetURL string, results []TechResult) {
+	if results == nil {
+		results = []TechResult{}
+	}
+
+	record := TargetResult{
+		Target:       targetURL,
+		Timestamp:    time.Now().UTC().Format(time.RFC3339),
+		Technologies: results,
+	}
+
+	jsonData, err := json.Marshal(record)
+	if err != nil {
+		return
+	}
+
+	jsonString := string(jsonData)
+
+	// Print JSON string directly to stdout
+	fmt.Println(jsonString)
+
+	// Write JSON line to file if output file is specified
+	if outputFile != nil {
+		outputFile.WriteString(jsonString + "\n")
 	}
 }
 
