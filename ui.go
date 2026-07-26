@@ -12,13 +12,16 @@ import (
 
 // Catppuccin 24-bit TrueColor ANSI Escape Codes
 const (
-	ColorReset   = "\x1b[0m"
-	ColorBold    = "\x1b[1m"
-	ColorMauve   = "\x1b[38;2;203;166;247m" // Magenta / Mauve
-	ColorBlue    = "\x1b[38;2;137;180;250m" // Blue
-	ColorGreen   = "\x1b[38;2;166;227;161m" // Green
-	ColorRed     = "\x1b[38;2;243;139;168m" // Red
-	ColorSubtext = "\x1b[38;2;166;173;200m"
+	ColorReset    = "\x1b[0m"
+	ColorBold     = "\x1b[1m"
+	ColorMauve    = "\x1b[38;2;203;166;247m" // Header Border
+	ColorBlue     = "\x1b[38;2;137;180;250m" // Target Blue / Low Severity
+	ColorGreen    = "\x1b[38;2;166;227;161m" // Safe / Success
+	ColorYellow   = "\x1b[38;2;249;226;175m" // Medium Severity
+	ColorPeach    = "\x1b[38;2;250;179;135m" // High Severity
+	ColorRed      = "\x1b[38;2;243;139;168m" // Critical Severity
+	ColorSubtext  = "\x1b[38;2;166;173;200m" // Gray / Secondary Info
+	ColorFlamingo = "\x1b[38;2;242;205;205m" // PoC Highlight
 )
 
 type TargetResult struct {
@@ -30,7 +33,7 @@ type TargetResult struct {
 var (
 	stdoutMutex sync.Mutex
 	outputFile  *os.File
-	ansiRegex   = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	ansiRegex   = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 	isJSONMode  bool
 )
 
@@ -56,6 +59,35 @@ func closeOutputFile() {
 	}
 }
 
+func getSeverityBadge(severity string, cvss float64) (uiBadge string, rawBadge string) {
+	upperSev := strings.ToUpper(severity)
+	if upperSev == "" {
+		upperSev = "UNKNOWN"
+	}
+
+	scoreStr := ""
+	if cvss > 0.0 {
+		scoreStr = fmt.Sprintf(" %.1f", cvss)
+	}
+
+	rawBadge = fmt.Sprintf("[%s%s]", upperSev, scoreStr)
+
+	switch upperSev {
+	case "CRITICAL":
+		uiBadge = fmt.Sprintf("%s%s[%s%s]%s", ColorRed, ColorBold, upperSev, scoreStr, ColorReset)
+	case "HIGH":
+		uiBadge = fmt.Sprintf("%s%s[%s%s]%s", ColorPeach, ColorBold, upperSev, scoreStr, ColorReset)
+	case "MEDIUM":
+		uiBadge = fmt.Sprintf("%s%s[%s%s]%s", ColorYellow, ColorBold, upperSev, scoreStr, ColorReset)
+	case "LOW":
+		uiBadge = fmt.Sprintf("%s%s[%s%s]%s", ColorBlue, ColorBold, upperSev, scoreStr, ColorReset)
+	default:
+		uiBadge = fmt.Sprintf("%s[%s%s]%s", ColorSubtext, upperSev, scoreStr, ColorReset)
+	}
+
+	return uiBadge, rawBadge
+}
+
 func renderTargetCard(targetURL string, results []TechResult) {
 	stdoutMutex.Lock()
 	defer stdoutMutex.Unlock()
@@ -65,16 +97,14 @@ func renderTargetCard(targetURL string, results []TechResult) {
 		return
 	}
 
-	const boxWidth = 110
+	const boxWidth = 115
 	const innerWidth = boxWidth - 4
 
 	var uiLines []string
 	var rawLines []string
 
-	// Raw Target Line for File Export
 	rawLines = append(rawLines, fmt.Sprintf("TARGET: %s", targetURL))
 
-	// UI Card Header
 	headerLine := fmt.Sprintf("%sTARGET:%s %s%s%s", ColorMauve+ColorBold, ColorReset, ColorBlue, targetURL, ColorReset)
 	uiLines = append(uiLines, headerLine)
 	uiLines = append(uiLines, "DIVIDER")
@@ -100,18 +130,25 @@ func renderTargetCard(targetURL string, results []TechResult) {
 						pipeIndent = "     "
 					}
 
-					vulnTag := fmt.Sprintf("%s[VULNERABLE]%s", ColorRed+ColorBold, ColorReset)
+					uiBadge, rawBadge := getSeverityBadge(cve.Severity, cve.CVSS)
 					cveTag := fmt.Sprintf("%s%s%s", ColorGreen+ColorBold, cve.ID, ColorReset)
 
-					prefixVisLen := 5 + 12 + 1 + len(cve.ID) + 4
+					pocUI := ""
+					pocRaw := ""
+					if cve.HasPoC {
+						pocUI = fmt.Sprintf(" %s%s[🔥 PoC AVAILABLE]%s", ColorFlamingo, ColorBold, ColorReset)
+						pocRaw = " [PoC AVAILABLE]"
+					}
+
+					prefixVisLen := visibleLength(branch) + visibleLength(uiBadge) + visibleLength(pocUI) + 1 + len(cve.ID) + 4
 					maxSummaryWidth := innerWidth - prefixVisLen
-					if maxSummaryWidth < 30 {
-						maxSummaryWidth = 30
+					if maxSummaryWidth < 20 {
+						maxSummaryWidth = 20
 					}
 
 					summaryLines := wrapWords(cve.Summary, maxSummaryWidth)
 
-					firstLine := fmt.Sprintf("%s%s %s -> %s%s%s", branch, vulnTag, cveTag, ColorSubtext, summaryLines[0], ColorReset)
+					firstLine := fmt.Sprintf("%s%s%s %s -> %s%s%s", branch, uiBadge, pocUI, cveTag, ColorSubtext, summaryLines[0], ColorReset)
 					uiLines = append(uiLines, firstLine)
 
 					if len(summaryLines) > 1 {
@@ -121,7 +158,7 @@ func renderTargetCard(targetURL string, results []TechResult) {
 						}
 					}
 
-					rawLines = append(rawLines, fmt.Sprintf("    * [VULNERABLE] %s -> %s", cve.ID, cve.Summary))
+					rawLines = append(rawLines, fmt.Sprintf("    * %s%s %s -> %s", rawBadge, pocRaw, cve.ID, cve.Summary))
 				}
 			} else {
 				safeTag := fmt.Sprintf("%s[SAFE]%s", ColorGreen+ColorBold, ColorReset)
@@ -134,7 +171,6 @@ func renderTargetCard(targetURL string, results []TechResult) {
 	var box strings.Builder
 	border := ColorMauve
 
-	// Top Border
 	box.WriteString(border + "╭" + strings.Repeat("─", boxWidth-2) + "╮" + ColorReset + "\n")
 
 	for _, line := range uiLines {
@@ -152,7 +188,6 @@ func renderTargetCard(targetURL string, results []TechResult) {
 		box.WriteString(fmt.Sprintf("%s│%s %s%s %s│%s\n", border, ColorReset, line, strings.Repeat(" ", padding), border, ColorReset))
 	}
 
-	// Bottom Border
 	box.WriteString(border + "╰" + strings.Repeat("─", boxWidth-2) + "╯" + ColorReset + "\n")
 
 	fmt.Print(box.String())
@@ -181,10 +216,8 @@ func renderJSONOutput(targetURL string, results []TechResult) {
 
 	jsonString := string(jsonData)
 
-	// Print JSON string directly to stdout
 	fmt.Println(jsonString)
 
-	// Write JSON line to file if output file is specified
 	if outputFile != nil {
 		outputFile.WriteString(jsonString + "\n")
 	}
@@ -214,7 +247,27 @@ func wrapWords(text string, maxLen int) []string {
 	return lines
 }
 
+// runeWidth calculates the visual display width of a Unicode character in terminal monospace fonts
+func runeWidth(r rune) int {
+	// Emojis and wide character ranges (occupy 2 terminal cells)
+	if (r >= 0x1F300 && r <= 0x1F9FF) || // Misc Symbols, Pictographs, Supplemental
+		(r >= 0x2600 && r <= 0x26FF) || // Misc Symbols
+		(r >= 0x2700 && r <= 0x27BF) || // Dingbats
+		(r >= 0xFE00 && r <= 0xFE0F) || // Variation Selectors
+		(r >= 0x1F000 && r <= 0x1F02F) ||
+		(r >= 0x1F0A0 && r <= 0x1F0FF) ||
+		(r >= 0x20000 && r <= 0x3FFFF) {
+		return 2
+	}
+	return 1
+}
+
+// visibleLength calculates exact visual width in terminal cells, ignoring ANSI escape codes
 func visibleLength(s string) int {
 	clean := ansiRegex.ReplaceAllString(s, "")
-	return len([]rune(clean))
+	width := 0
+	for _, r := range clean {
+		width += runeWidth(r)
+	}
+	return width
 }
