@@ -151,39 +151,47 @@ func fetchTargetSmart(rawTarget string) (*http.Response, string) {
 	}
 
 	if strings.HasPrefix(rawTarget, "http://") || strings.HasPrefix(rawTarget, "https://") {
-		req, err := http.NewRequest("GET", rawTarget, nil)
-		if err != nil {
-			return nil, ""
-		}
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Snare/1.3")
-		resp, err := httpClient.Do(req)
-		if err != nil {
+		resp := doRequestWithRetry(rawTarget)
+		if resp == nil {
 			return nil, ""
 		}
 		return resp, rawTarget
 	}
 
 	httpsURL := "https://" + rawTarget
-	req, err := http.NewRequest("GET", httpsURL, nil)
-	if err == nil {
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Snare/1.3")
-		resp, err := httpClient.Do(req)
-		if err == nil {
-			return resp, httpsURL
-		}
+	resp := doRequestWithRetry(httpsURL)
+	if resp != nil {
+		return resp, httpsURL
 	}
 
 	httpURL := "http://" + rawTarget
-	req, err = http.NewRequest("GET", httpURL, nil)
-	if err != nil {
-		return nil, ""
+	resp = doRequestWithRetry(httpURL)
+	if resp != nil {
+		return resp, httpURL
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Snare/1.3")
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, ""
+
+	return nil, ""
+}
+
+func doRequestWithRetry(targetURL string) *http.Response {
+	attempts := retryCount + 1
+	for i := 0; i < attempts; i++ {
+		req, err := http.NewRequest("GET", targetURL, nil)
+		if err != nil {
+			return nil
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Snare/1.5")
+
+		resp, err := httpClient.Do(req)
+		if err == nil {
+			return resp
+		}
+
+		if i < attempts-1 {
+			time.Sleep(time.Duration(i+1) * 300 * time.Millisecond)
+		}
 	}
-	return resp, httpURL
+	return nil
 }
 
 func resolveVulnerabilities(techName, version string) []CVEInfo {
@@ -244,7 +252,7 @@ func queryOnlineAPIs(vendor, product, version string) []CVEInfo {
 	apiURL := fmt.Sprintf("https://vulnerability.circl.lu/api/search/%s/%s", url.PathEscape(vendor), url.PathEscape(product))
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err == nil {
-		req.Header.Set("User-Agent", "Snare/1.3")
+		req.Header.Set("User-Agent", "Snare/1.5")
 		resp, err := httpClient.Do(req)
 		if err == nil && resp.StatusCode == 200 {
 			defer resp.Body.Close()
@@ -259,7 +267,7 @@ func queryOnlineAPIs(vendor, product, version string) []CVEInfo {
 				for _, item := range items {
 					sev := calculateSeverityFromCVSS(item.CVSS)
 					hasPoc := item.MapEdb != "" || item.MapMsf != "" || strings.Contains(strings.ToLower(item.Summary), "exploit") || strings.Contains(strings.ToLower(item.Summary), "proof of concept")
-					
+
 					cves = append(cves, CVEInfo{
 						ID:       item.ID,
 						Severity: sev,

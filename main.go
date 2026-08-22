@@ -5,9 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 )
+
+var retryCount int
 
 func main() {
 	singleDomain := flag.String("d", "", "Single target domain or URL")
@@ -16,12 +19,13 @@ func main() {
 	outputPath := flag.String("o", "", "File to save raw results")
 	jsonOutput := flag.Bool("json", false, "Output results as structured JSON lines")
 	concurrency := flag.Int("c", 10, "Number of concurrent workers")
+	retries := flag.Int("rt", 3, "Number of request retries for target scanning")
 	noBanner := flag.Bool("no-banner", false, "Disable startup ASCII banner")
+	updateCmd := flag.Bool("update", false, "Update SNARE to the latest version via go install")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "SNARE - Web Technology Fingerprinting & CVE Discovery Engine\n")
-		fmt.Fprintf(os.Stderr, "Created by t-onix\n\n")
-		fmt.Fprintf(os.Stderr, "Usage:\n")
+		fmt.Fprintf(os.Stderr, "\nUsage:\n")
 		fmt.Fprintf(os.Stderr, "  snare [flags]\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
@@ -29,11 +33,25 @@ func main() {
 
 	flag.Parse()
 
+	if *updateCmd {
+		fmt.Println("[+] Updating SNARE to the latest version...")
+		cmd := exec.Command("go", "install", "github.com/t-onix/snare@latest")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "[-] Update failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("[+] SNARE updated successfully!")
+		os.Exit(0)
+	}
+
+	retryCount = *retries
+
 	if *jsonOutput {
 		setJSONMode(true)
 	}
 
-	// Print ASCII banner only if not suppressed and not in JSON mode
 	if !*noBanner && !*jsonOutput {
 		printBanner()
 	}

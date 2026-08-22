@@ -78,12 +78,18 @@ Flags:
     	Single target domain or URL
   -f string
     	File containing list of targets
+  -json
+    	Output results as structured JSON lines
   -no-banner
     	Disable startup ASCII banner
   -o string
-    	File to save raw results (without UI elements)
+    	File to save raw results
+  -rt int
+    	Number of request retries for target scanning (default 3)
   -t string
     	Manual technology & version lookup (e.g. nextjs:1.2.3 or apache:2.4.49)
+  -update
+    	Update SNARE to the latest version via go install
 ```
 
 ### Examples
