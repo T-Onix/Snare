@@ -108,6 +108,10 @@ func processManualTech(rawInput string) {
 		res.CVEs = resolveVulnerabilities(tech.Name, tech.Version)
 	}
 
+	if vulnOnly && len(res.CVEs) == 0 {
+		return
+	}
+
 	targetLabel := fmt.Sprintf("MANUAL LOOKUP [%s]", rawInput)
 	renderTargetCard(targetLabel, []TechResult{res})
 }
@@ -130,6 +134,7 @@ func processTarget(rawTarget string) {
 	}
 
 	var results []TechResult
+	hasCVE := false
 
 	for techRaw := range fingerprints {
 		tech := parseTechVersion(techRaw)
@@ -137,11 +142,27 @@ func processTarget(rawTarget string) {
 
 		if tech.Version != "" {
 			res.CVEs = resolveVulnerabilities(tech.Name, tech.Version)
+			if len(res.CVEs) > 0 {
+				hasCVE = true
+			}
 		}
-		results = append(results, res)
+
+		if vulnOnly {
+			if len(res.CVEs) > 0 {
+				results = append(results, res)
+			}
+		} else {
+			results = append(results, res)
+		}
 	}
 
-	renderTargetCard(finalURL, results)
+	if vulnOnly && !hasCVE {
+		return
+	}
+
+	if len(results) > 0 {
+		renderTargetCard(finalURL, results)
+	}
 }
 
 func fetchTargetSmart(rawTarget string) (*http.Response, string) {

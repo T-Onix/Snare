@@ -10,7 +10,10 @@ import (
 	"sync"
 )
 
-var retryCount int
+var (
+	retryCount int
+	vulnOnly   bool
+)
 
 func main() {
 	singleDomain := flag.String("d", "", "Single target domain or URL")
@@ -20,6 +23,11 @@ func main() {
 	jsonOutput := flag.Bool("json", false, "Output results as structured JSON lines")
 	concurrency := flag.Int("c", 10, "Number of concurrent workers")
 	retries := flag.Int("rt", 3, "Number of request retries for target scanning")
+	
+	// -vuln-only and -vo bound together
+	vulnOnlyFlag := flag.Bool("vuln-only", false, "Only display targets with identified CVEs")
+	voFlag := flag.Bool("vo", false, "Only display targets with identified CVEs (shorthand)")
+	
 	noBanner := flag.Bool("no-banner", false, "Disable startup ASCII banner")
 	updateCmd := flag.Bool("update", false, "Update SNARE to the latest version via go install")
 
@@ -47,6 +55,7 @@ func main() {
 	}
 
 	retryCount = *retries
+	vulnOnly = *vulnOnlyFlag || *voFlag
 
 	if *jsonOutput {
 		setJSONMode(true)
