@@ -92,8 +92,6 @@ Flags:
     	Update SNARE to the latest version via
   -vo
     	Only display targets with identified CVEs
-  -vuln-only
-    	Only display targets with identified CVEs
 ```
 
 ### Examples
