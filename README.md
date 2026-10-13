@@ -89,9 +89,9 @@ Flags:
   -t string
     	Manual technology & version lookup (e.g. nextjs:1.2.3 or apache:2.4.49)
   -update
-    	Update SNARE to the latest version via go install
+    	Update SNARE to the latest version via
   -vo
-    	Only display targets with identified CVEs (shorthand)
+    	Only display targets with identified CVEs
   -vuln-only
     	Only display targets with identified CVEs
 ```
