@@ -12,14 +12,17 @@ import (
 )
 
 var (
-	retryCount int
-	vulnOnly   bool
+	retryCount     int
+	vulnOnly       bool
+	specificCVESet map[string]struct{}
 )
 
 func main() {
 	singleDomain := flag.String("d", "", "Single target domain or URL")
 	filePath := flag.String("f", "", "File containing list of targets")
 	manualTech := flag.String("t", "", "Manual technology & version lookup (e.g. nextjs:1.2.3 or apache:2.4.49)")
+	specificCVEs := flag.String("sc", "", "Comma-separated list of specific CVEs to scan for (e.g. 'CVE-2021-41773,CVE-2014-0160')")
+	specificCVEsLong := flag.String("specific-cves", "", "Comma-separated list of specific CVEs to scan for")
 	outputPath := flag.String("o", "", "File to save results")
 	jsonOutput := flag.Bool("json", false, "Output results as structured JSON lines")
 	concurrency := flag.Int("c", 10, "Number of concurrent target workers")
@@ -64,8 +67,25 @@ func main() {
 		os.Exit(2)
 	}
 
+	rawFilter := strings.TrimSpace(*specificCVEs)
+	if *specificCVEsLong != "" {
+		if rawFilter != "" {
+			rawFilter += "," + *specificCVEsLong
+		} else {
+			rawFilter = *specificCVEsLong
+		}
+	}
+	if rawFilter != "" {
+		parsedSet, err := parseSpecificCVEFilter(rawFilter)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[-] Invalid -sc / -specific-cves value: %v\n", err)
+			os.Exit(2)
+		}
+		specificCVESet = parsedSet
+	}
+
 	retryCount = *retries
-	vulnOnly = *vulnOnlyFlag || *voFlag
+	vulnOnly = *vulnOnlyFlag || *voFlag || len(specificCVESet) > 0
 	setJSONMode(*jsonOutput)
 
 	if !*noBanner && !*jsonOutput {

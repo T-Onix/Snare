@@ -126,6 +126,7 @@ var (
 
 	versionTokenRE = regexp.MustCompile(`[0-9]+|[a-z]+`)
 	cpeComponentRE = regexp.MustCompile(`^[a-zA-Z0-9._+~-]+$`)
+	cveIDFormatRE  = regexp.MustCompile(`^CVE-[0-9]{4}-[0-9]{4,}$`)
 )
 
 type cveCacheEntry struct {
@@ -384,6 +385,42 @@ func lookupVulnerabilities(techName, version string) ([]CVEInfo, string) {
 	return cves, status
 }
 
+func parseSpecificCVEFilter(raw string) (map[string]struct{}, error) {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n'
+	})
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("no CVE IDs provided")
+	}
+	out := make(map[string]struct{}, len(parts))
+	for _, p := range parts {
+		id := strings.ToUpper(strings.TrimSpace(p))
+		if id == "" {
+			continue
+		}
+		if !strings.HasPrefix(id, "CVE-") {
+			id = "CVE-" + id
+		}
+		if !cveIDFormatRE.MatchString(id) {
+			return nil, fmt.Errorf("invalid CVE identifier %q (expected format CVE-YYYY-NNNN)", p)
+		}
+		out[id] = struct{}{}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no valid CVE IDs provided")
+	}
+	return out, nil
+}
+
+func matchesSpecificCVEFilter(cveID string) bool {
+	if len(specificCVESet) == 0 {
+		return true
+	}
+	id := strings.ToUpper(strings.TrimSpace(cveID))
+	_, ok := specificCVESet[id]
+	return ok
+}
+
 func lookupVulnerabilitiesDetailed(techName, version string) ([]CVEInfo, string, string) {
 	cleanVersion := cleanVersionString(version)
 	if cleanVersion == "" {
@@ -424,7 +461,7 @@ func lookupVulnerabilitiesDetailed(techName, version string) ([]CVEInfo, string,
 	seen := make(map[string]struct{})
 	appendCVE := func(cve CVEInfo) {
 		id := strings.ToUpper(strings.TrimSpace(cve.ID))
-		if id == "" {
+		if id == "" || !matchesSpecificCVEFilter(id) {
 			return
 		}
 		if _, exists := seen[id]; exists {
@@ -436,7 +473,7 @@ func lookupVulnerabilitiesDetailed(techName, version string) ([]CVEInfo, string,
 	}
 	for _, record := range circl.records {
 		id := canonicalCVEID(record)
-		if id == "" || isRejectedCVERecord(record) || !recordAffectsVersion(record, vendor, product, cleanVersion) {
+		if id == "" || !matchesSpecificCVEFilter(id) || isRejectedCVERecord(record) || !recordAffectsVersion(record, vendor, product, cleanVersion) {
 			continue
 		}
 		cvss := extractCVSS(record.CVSS)
@@ -505,7 +542,11 @@ func lookupVulnerabilitiesDetailed(techName, version string) ([]CVEInfo, string,
 	// backports and configuration-dependent applicability.
 	usedFallback := false
 	for _, cve := range offlineFallbackCVEs(vendor, product, cleanVersion) {
-		if _, exists := seen[strings.ToUpper(cve.ID)]; exists {
+		id := strings.ToUpper(strings.TrimSpace(cve.ID))
+		if !matchesSpecificCVEFilter(id) {
+			continue
+		}
+		if _, exists := seen[id]; exists {
 			continue
 		}
 		appendCVE(cve)
