@@ -21,7 +21,7 @@
 
 ```text
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ TARGET:  [https://example-vulnerable-host.com](https://example-vulnerable-host.com)                      │
+│ TARGET:  https://example-vulnerable-host.com                                                             │
 ├──────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │ Tech: OpenSSL v1.0.1e                                                                                    │
 │   └─ [HIGH 7.5] [🔥 PoC AVAILABLE] CVE-2014-0160 -> Heartbleed: Out-of-bounds read in TLS heartbeat      │
@@ -173,7 +173,8 @@ snare -d example.com -json | jq
 }
 ```
 
-- Environment Variables
+- Environment Variables:
+
     NVD_API_KEY: Optional NIST NVD API key to increase NVD fallback rate limits during large scans.
     SNARE_CACHE_DIR: Optional custom directory path for persistent CVE lookup caching.
 
