@@ -95,6 +95,11 @@ func getSeverityBadge(severity string, cvss float64) (uiBadge string, rawBadge s
 }
 
 func renderTargetCard(targetURL string, results []TechResult) {
+	if scanBar != nil {
+		scanBar.pauseForCard()
+		defer scanBar.resumeAfterCard()
+	}
+
 	stdoutMutex.Lock()
 	defer stdoutMutex.Unlock()
 

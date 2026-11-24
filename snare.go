@@ -267,6 +267,14 @@ func processManualTech(rawInput string) {
 }
 
 func processTarget(rawTarget string) {
+	// Count the target as finished on every exit path, including failures and
+	// filtered results, so the status bar tracks the queue rather than matches.
+	defer func() {
+		if scanProgress != nil {
+			scanProgress.complete()
+		}
+	}()
+
 	resp, finalURL := fetchTargetSmart(rawTarget)
 	if resp == nil {
 		return

@@ -120,21 +120,34 @@ func main() {
 		go worker(targetsChan, &workers)
 	}
 
+	tracker := &progressTracker{}
+	var bar *progressBar
+	if progressEnabled(*jsonOutput, false) {
+		scanProgress = tracker
+		bar = newProgressBar(tracker)
+		scanBar = bar
+		bar.start()
+		defer bar.stopBar()
+	}
+
 	// A single producer streams input, so large target lists never sit in memory.
 	go func() {
 		defer close(targetsChan)
+		if bar != nil {
+			defer tracker.producerFinished()
+		}
 		// Dedupe across -d, -f, and stdin. One producer owns the map, so it needs
 		// no lock and duplicates never take a worker slot.
 		seenTargets := make(map[string]struct{})
 		if target := strings.TrimSpace(*singleDomain); target != "" {
-			queueUniqueTarget(target, targetsChan, seenTargets)
+			queueUniqueTarget(target, targetsChan, seenTargets, tracker)
 		}
 		if *filePath != "" {
 			file, err := os.Open(*filePath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "[-] Cannot open target file %q: %v\n", *filePath, err)
 			} else {
-				if err := streamTargets(file, targetsChan, seenTargets); err != nil {
+				if err := streamTargets(file, targetsChan, seenTargets, tracker); err != nil {
 					fmt.Fprintf(os.Stderr, "[-] Error reading target file %q: %v\n", *filePath, err)
 				}
 				if err := file.Close(); err != nil {
@@ -149,7 +162,7 @@ func main() {
 			return
 		}
 		if stat.Mode()&os.ModeCharDevice == 0 {
-			if err := streamTargets(os.Stdin, targetsChan, seenTargets); err != nil && !errors.Is(err, os.ErrClosed) {
+			if err := streamTargets(os.Stdin, targetsChan, seenTargets, tracker); err != nil && !errors.Is(err, os.ErrClosed) {
 				fmt.Fprintf(os.Stderr, "[-] Error reading stdin: %v\n", err)
 			}
 		}
@@ -170,17 +183,17 @@ func flagDefaultSuffix(f *flag.Flag) string {
 	return fmt.Sprintf(" (default %s)", f.DefValue)
 }
 
-func streamTargets(input *os.File, out chan<- string, seen map[string]struct{}) error {
+func streamTargets(input *os.File, out chan<- string, seen map[string]struct{}, trackers ...*progressTracker) error {
 	scanner := bufio.NewScanner(input)
 	// Some generated target lists exceed the scanner's 64 KiB default line limit.
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
-		queueUniqueTarget(scanner.Text(), out, seen)
+		queueUniqueTarget(scanner.Text(), out, seen, trackers...)
 	}
 	return scanner.Err()
 }
 
-func queueUniqueTarget(raw string, out chan<- string, seen map[string]struct{}) {
+func queueUniqueTarget(raw string, out chan<- string, seen map[string]struct{}, trackers ...*progressTracker) {
 	target := strings.TrimSpace(raw)
 	if target == "" {
 		return
@@ -190,6 +203,11 @@ func queueUniqueTarget(raw string, out chan<- string, seen map[string]struct{}) 
 		return
 	}
 	seen[key] = struct{}{}
+	for _, tracker := range trackers {
+		if tracker != nil {
+			tracker.addTarget()
+		}
+	}
 	out <- target
 }
 
