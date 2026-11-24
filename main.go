@@ -22,22 +22,27 @@ func main() {
 	filePath := flag.String("f", "", "File containing list of targets")
 	manualTech := flag.String("t", "", "Manual technology & version lookup (e.g. nextjs:1.2.3 or apache:2.4.49)")
 	specificCVEs := flag.String("sc", "", "Comma-separated list of specific CVEs to scan for (e.g. 'CVE-2021-41773,CVE-2014-0160')")
-	specificCVEsLong := flag.String("specific-cves", "", "Comma-separated list of specific CVEs to scan for")
 	outputPath := flag.String("o", "", "File to save results")
 	jsonOutput := flag.Bool("json", false, "Output results as structured JSON lines")
 	concurrency := flag.Int("c", 10, "Number of concurrent target workers")
 	retries := flag.Int("rt", 2, "Number of retries for failed target requests")
 	insecureTLS := flag.Bool("k", false, "Skip TLS certificate verification (use only when required)")
 
-	vulnOnlyFlag := flag.Bool("vuln-only", false, "Only display targets with version-matched CVEs")
-	voFlag := flag.Bool("vo", false, "Only display targets with version-matched CVEs (shorthand)")
+	voFlag := flag.Bool("vo", false, "Only display targets with version-matched CVEs")
 	noBanner := flag.Bool("no-banner", false, "Disable startup ASCII banner")
 	updateCmd := flag.Bool("update", false, "Update SNARE to the latest version via go install")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "SNARE - Web Technology Fingerprinting & CVE Discovery Engine\n")
 		fmt.Fprintf(os.Stderr, "\nUsage:\n  snare [flags]\n\nFlags:\n")
-		flag.PrintDefaults()
+		flag.VisitAll(func(f *flag.Flag) {
+			name, usage := flag.UnquoteUsage(f)
+			line := "  -" + f.Name
+			if name != "" {
+				line += " " + name
+			}
+			fmt.Fprintf(os.Stderr, "%s\n    \t%s%s\n", line, usage, flagDefaultSuffix(f))
+		})
 	}
 	flag.Parse()
 
@@ -68,24 +73,17 @@ func main() {
 	}
 
 	rawFilter := strings.TrimSpace(*specificCVEs)
-	if *specificCVEsLong != "" {
-		if rawFilter != "" {
-			rawFilter += "," + *specificCVEsLong
-		} else {
-			rawFilter = *specificCVEsLong
-		}
-	}
 	if rawFilter != "" {
 		parsedSet, err := parseSpecificCVEFilter(rawFilter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[-] Invalid -sc / -specific-cves value: %v\n", err)
+			fmt.Fprintf(os.Stderr, "[-] Invalid -sc value: %v\n", err)
 			os.Exit(2)
 		}
 		specificCVESet = parsedSet
 	}
 
 	retryCount = *retries
-	vulnOnly = *vulnOnlyFlag || *voFlag || len(specificCVESet) > 0
+	vulnOnly = *voFlag || len(specificCVESet) > 0
 	setJSONMode(*jsonOutput)
 
 	if !*noBanner && !*jsonOutput {
@@ -122,12 +120,11 @@ func main() {
 		go worker(targetsChan, &workers)
 	}
 
-	// A dedicated producer streams input, so large target lists are not kept in memory.
+	// A single producer streams input, so large target lists never sit in memory.
 	go func() {
 		defer close(targetsChan)
-		// Avoid scanning the exact same target more than once when the user
-		// combines -d, -f, and piped stdin. This map lives in the single producer,
-		// so it needs no mutex and duplicates never occupy worker queue slots.
+		// Dedupe across -d, -f, and stdin. One producer owns the map, so it needs
+		// no lock and duplicates never take a worker slot.
 		seenTargets := make(map[string]struct{})
 		if target := strings.TrimSpace(*singleDomain); target != "" {
 			queueUniqueTarget(target, targetsChan, seenTargets)
@@ -161,9 +158,21 @@ func main() {
 	workers.Wait()
 }
 
+func flagDefaultSuffix(f *flag.Flag) string {
+	if f.DefValue == "" || f.DefValue == "false" || f.DefValue == "0" {
+		return ""
+	}
+	if getter, ok := f.Value.(flag.Getter); ok {
+		if _, isString := getter.Get().(string); isString {
+			return fmt.Sprintf(" (default %q)", f.DefValue)
+		}
+	}
+	return fmt.Sprintf(" (default %s)", f.DefValue)
+}
+
 func streamTargets(input *os.File, out chan<- string, seen map[string]struct{}) error {
 	scanner := bufio.NewScanner(input)
-	// Scanner's default 64 KiB line limit is too small for some generated target lists.
+	// Some generated target lists exceed the scanner's 64 KiB default line limit.
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		queueUniqueTarget(scanner.Text(), out, seen)

@@ -54,8 +54,8 @@ type TechResult struct {
 	CVEError  string    `json:"cve_error,omitempty"`
 }
 
-// circlRecord deliberately accepts both the legacy, backwards-compatible CIRCL
-// CVE-Search fields and fields used by newer CVE 5 / NVD-shaped records.
+// circlRecord covers both the legacy CVE-Search fields and the newer CVE 5 /
+// NVD-shaped records.
 type circlRecord struct {
 	ID          string   `json:"id"`
 	CVE         string   `json:"cve"`
@@ -95,11 +95,11 @@ type cpeConfig struct {
 var (
 	httpClient       *http.Client // short timeout for target fingerprinting
 	cveHTTPClient    *http.Client // CIRCL/NVD client with bounded headers and total timeout
-	osvHTTPClient    *http.Client // OSV gets its own longer header deadline; it must not inherit CIRCL's timeout
+	osvHTTPClient    *http.Client // OSV needs a longer header deadline; it must not inherit CIRCL's timeout
 	wappalyzerClient *wappalyzer.Wappalyze
 
-	// Identical product searches are coalesced across workers. This matters when
-	// scanning hundreds/thousands of targets that expose the same software.
+	// Identical product lookups are shared between workers, which matters when a
+	// scan hits thousands of targets running the same software.
 	cveCache = struct {
 		sync.Mutex
 		entries  map[string]cveCacheEntry
@@ -109,8 +109,8 @@ var (
 		inflight: make(map[string]*cveQueryCall),
 	}
 	cveAPISlots = make(chan struct{}, 4)
-	// NVD is more aggressively rate-limited than CIRCL. Bound parallel calls
-	// separately; a user's NVD_API_KEY can be used for higher throughput.
+	// NVD rate-limits harder than CIRCL, so its calls get their own bound.
+	// An NVD_API_KEY raises the ceiling.
 	nvdAPISlots  = make(chan struct{}, 2)
 	nvdRateState = struct {
 		sync.Mutex
@@ -141,9 +141,8 @@ type cveQueryCall struct {
 	err     error
 }
 
-// Version-specific secondary providers (OSV and NVD) have their own bounded
-// cache because their answers depend on the requested version, unlike CIRCL's
-// vendor/product catalogue query.
+// OSV and NVD answers depend on the requested version, so they need their own
+// cache; CIRCL only answers per vendor/product.
 type externalCacheEntry struct {
 	cves      []CVEInfo
 	err       error
@@ -161,9 +160,8 @@ var externalCVECache = struct {
 	inflight map[string]*externalQueryCall
 }{entries: make(map[string]externalCacheEntry), inflight: make(map[string]*externalQueryCall)}
 
-// nvdDiskEntry persists successful CPE lookups across process restarts. A short
-// TTL prevents Ctrl+C/re-run loops from hammering NVD without hiding updates
-// for an excessive amount of time. Empty successful responses are cacheable.
+// nvdDiskEntry keeps successful lookups across runs. The TTL stops a Ctrl+C and
+// re-run loop from hammering NVD, and empty results are cached too.
 type nvdDiskEntry struct {
 	FetchedAt time.Time `json:"fetched_at"`
 	CVEs      []CVEInfo `json:"cves"`
@@ -215,9 +213,8 @@ func initScanner(insecureTLS bool) error {
 		Transport:     transport,
 		CheckRedirect: redirectPolicy,
 	}
-	// CVE sources often take longer to respond than a target's HTML. Clone the
-	// transport as well as the client: otherwise ResponseHeaderTimeout=6s on
-	// the target transport still silently caps all CVE API requests.
+	// Clone the transport as well as the client. Otherwise the target's 6s header
+	// timeout silently caps every CVE API request.
 	cveTransport := transport.Clone()
 	cveTransport.ResponseHeaderTimeout = 5 * time.Second
 	cveTransport.MaxIdleConnsPerHost = 8
@@ -228,9 +225,8 @@ func initScanner(insecureTLS bool) error {
 		CheckRedirect: redirectPolicy,
 	}
 
-	// OSV normally responds quickly, but its shared POST endpoint can have
-	// occasional cold-start / transient header latency. Do not let the tighter
-	// CIRCL/NVD header deadline turn those cases into false lookup failures.
+	// OSV's shared POST endpoint has occasional cold-start latency, so it gets a
+	// longer header deadline than CIRCL/NVD.
 	osvTransport := transport.Clone()
 	osvTransport.ResponseHeaderTimeout = 12 * time.Second
 	osvTransport.MaxIdleConnsPerHost = 8
@@ -280,8 +276,8 @@ func processTarget(rawTarget string) {
 		finalURL = resp.Request.URL.String()
 	}
 
-	// A response body can be arbitrarily large. Fingerprinting needs only the
-	// beginning of a response, so cap decompressed reads to keep memory bounded.
+	// A response body can be arbitrarily large, but fingerprinting only needs the
+	// start, so cap the read to keep memory bounded.
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxTargetBodyBytes))
 	if err != nil {
 		return
@@ -296,7 +292,7 @@ func processTarget(rawTarget string) {
 	for techRaw := range fingerprints {
 		techNames = append(techNames, techRaw)
 	}
-	sort.Strings(techNames) // stable ordering within a target
+	sort.Strings(techNames) // stable order in the output
 
 	results := make([]TechResult, 0, len(techNames))
 	hasCVE := false
@@ -372,9 +368,8 @@ func doRequestWithRetry(targetURL string) *http.Response {
 	return nil
 }
 
-// resolveVulnerabilities remains as a simple helper for callers that only need
-// the result slice. LookupStatus is used by the CLI so a source outage is never
-// presented as a clean bill of health.
+// resolveVulnerabilities is the result-only helper. The CLI uses the detailed
+// variant so a source outage is never reported as a clean scan.
 func resolveVulnerabilities(techName, version string) []CVEInfo {
 	cves, _ := lookupVulnerabilities(techName, version)
 	return cves
@@ -431,9 +426,7 @@ func lookupVulnerabilitiesDetailed(techName, version string) ([]CVEInfo, string,
 		return nil, "unsupported_product", ""
 	}
 
-	// Query CIRCL and the version-aware OSV API concurrently. Previously, a
-	// CIRCL DNS/timeout failure stopped all further lookup attempts, which is
-	// exactly why Bootstrap/jQuery/Drupal displayed LOOKUP UNAVAILABLE.
+	// Query CIRCL and OSV together; a CIRCL timeout must not block the OSV lookup.
 	type circlResult struct {
 		records []circlRecord
 		err     error
@@ -501,12 +494,8 @@ func lookupVulnerabilitiesDetailed(techName, version string) ([]CVEInfo, string,
 		appendCVE(cve)
 	}
 
-	// NVD is a third independent source. Try it whenever the first two sources
-	// produced no version-matched CVE, including a successful-but-empty OSV
-	// response. The previous condition skipped NVD precisely when OSV was
-	// reachable but had no record for a package/version, turning a normal
-	// no-match into a false lookup failure. The version-specific cache and the
-	// NVD semaphore below keep this fallback bounded during large scans.
+	// NVD is the third source, tried when the first two found nothing, including
+	// an empty OSV answer. The version cache and semaphore keep it bounded.
 	nvdAttempted, nvdOK := false, false
 	var nvdErr error
 	if len(results) == 0 && nvdCPEName(vendor, product, cleanVersion) != "" {
@@ -521,8 +510,8 @@ func lookupVulnerabilitiesDetailed(techName, version string) ([]CVEInfo, string,
 		}
 	}
 
-	// Record errors even when another provider returns findings, so output never
-	// silently implies that every source was consulted successfully.
+	// Record source errors even when another provider returns findings, so the
+	// output never implies every source was reached.
 	circlOK := circl.err == nil
 	osvOK := osv.supported && osv.err == nil
 	var errorsFound []string
@@ -537,9 +526,8 @@ func lookupVulnerabilitiesDetailed(techName, version string) ([]CVEInfo, string,
 	}
 	diagnostic := strings.Join(errorsFound, "; ")
 
-	// Always merge the small offline list as a last-resort safety net. These
-	// results are labelled in UI by status and must still be checked for distro
-	// backports and configuration-dependent applicability.
+	// Always merge the offline list as a last resort. The UI labels these results,
+	// and they still need checking against distro backports and configuration.
 	usedFallback := false
 	for _, cve := range offlineFallbackCVEs(vendor, product, cleanVersion) {
 		id := strings.ToUpper(strings.TrimSpace(cve.ID))
@@ -569,8 +557,8 @@ func lookupVulnerabilitiesDetailed(techName, version string) ([]CVEInfo, string,
 		return results, "matched", ""
 	}
 
-	// A clean 200 response with an empty result set is NOT a lookup failure.
-	// Mark the lookup unavailable only when every source we could use failed.
+	// An empty 200 is a no-match, not a failure. Only mark the lookup unavailable
+	// when every usable source failed.
 	if circlOK || osvOK || nvdOK {
 		if diagnostic != "" {
 			return results, "partial_lookup", diagnostic
@@ -580,9 +568,8 @@ func lookupVulnerabilitiesDetailed(techName, version string) ([]CVEInfo, string,
 	return results, "lookup_error", diagnostic
 }
 
-// cacheExternalCVEs caches success (including no-match responses) for five
-// minutes and failures for twenty seconds, and coalesces duplicate in-flight
-// queries. This is important when thousands of hosts expose the same library.
+// cacheExternalCVEs caches hits and misses for five minutes, errors for twenty
+// seconds, and shares an in-flight query between callers.
 func cacheExternalCVEs(key string, loader func() ([]CVEInfo, error)) ([]CVEInfo, error) {
 	now := time.Now()
 	externalCVECache.Lock()
@@ -624,10 +611,8 @@ func cacheExternalCVEs(key string, loader func() ([]CVEInfo, error)) ([]CVEInfo,
 	return append([]CVEInfo(nil), cves...), err
 }
 
-// lookupOSVVersion maps known public library fingerprints to exact package
-// coordinates. OSV is queried only when the detected version has at least a
-// major/minor component; manual affected-range validation guards against fuzzy
-// upstream matching.
+// lookupOSVVersion maps known library fingerprints to OSV package coordinates.
+// It skips versions without a major/minor pair and validates affected ranges itself.
 func lookupOSVVersion(vendor, product, version string) ([]CVEInfo, bool, error) {
 	name, ecosystem, ok := osvPackageFor(vendor, product)
 	if !ok || !strings.Contains(version, ".") {
@@ -701,8 +686,8 @@ func queryOSVPackage(name, ecosystem, version string) ([]CVEInfo, error) {
 	req.Header.Set("User-Agent", "SNARE/1.6.6 (+https://github.com/t-onix/snare)")
 	client := osvHTTPClient
 	if client == nil {
-		// Keep tests and non-main callers safe if they construct the scanner
-		// without initScanner; production always initializes osvHTTPClient.
+		// Tests may build the scanner without initScanner, so fall back to the
+		// CVE client; production always sets osvHTTPClient.
 		client = cveHTTPClient
 	}
 	if client == nil {
@@ -817,9 +802,8 @@ func osvAffectsPackageVersion(vuln osvVulnerability, name, ecosystem, version st
 	return false
 }
 
-// lookupNVDVersion asks NVD to correlate a concrete CPE and version. NVD's
-// own version-range matching is used here, avoiding unsafe broad keyword
-// results and allowing major-only fingerprints such as Drupal 10 to be queried.
+// lookupNVDVersion asks NVD to correlate a concrete CPE and version. That keeps
+// the query narrow and lets major-only fingerprints like Drupal 10 through.
 func lookupNVDVersion(vendor, product, version string) ([]CVEInfo, error) {
 	cpe := nvdCPEName(vendor, product, version)
 	if cpe == "" {
@@ -874,9 +858,8 @@ func nvdCPEName(vendor, product, version string) string {
 	case "phpmyadmin":
 		vendor, product = "phpmyadmin", "phpmyadmin"
 	default:
-		// Wappalyzer can return hundreds of labels that are not canonical CPEs.
-		// Do not invent CPEs for unrecognized products: these queries are noisy,
-		// waste the public NVD request budget, and can create false associations.
+		// Wappalyzer returns plenty of labels that aren't canonical CPEs. Don't
+		// invent one: the query is noisy and burns the public NVD budget.
 		return ""
 	}
 	if !cpeComponentRE.MatchString(vendor) || !cpeComponentRE.MatchString(product) || !cpeComponentRE.MatchString(version) {
@@ -898,8 +881,8 @@ type nvdCVEResponse struct {
 }
 
 func queryNVDCPE(cpe string) ([]CVEInfo, error) {
-	// Do not queue workers behind a slow/rate-limited NVD request. CIRCL/OSV
-	// results remain useful even when NVD enrichment is skipped.
+	// Don't queue workers behind a slow or rate-limited NVD call; CIRCL/OSV
+	// results are still worth showing.
 	select {
 	case nvdAPISlots <- struct{}{}:
 		defer func() { <-nvdAPISlots }()
@@ -907,9 +890,8 @@ func queryNVDCPE(cpe string) ([]CVEInfo, error) {
 		return nil, fmt.Errorf("NVD concurrency guard is busy; skipped this fallback so scanning can continue")
 	}
 
-	// This is deliberately non-blocking. When the local request budget is spent
-	// or NVD has told us to cool down, skip this fallback instead of stalling all
-	// target workers behind a long sleep. CIRCL/OSV results are still retained.
+	// Non-blocking on purpose. If the budget is spent or NVD asked us to cool
+	// down, skip this fallback rather than stall every worker behind a sleep.
 	if err := reserveNVDRequest(); err != nil {
 		return nil, err
 	}
@@ -967,8 +949,8 @@ func queryNVDCPE(cpe string) ([]CVEInfo, error) {
 	return results, nil
 }
 
-// nvdCacheDirectory honors SNARE_CACHE_DIR for portable deployments and tests;
-// otherwise it uses the operating system's standard per-user cache directory.
+// nvdCacheDirectory uses SNARE_CACHE_DIR when set, otherwise the OS per-user
+// cache directory.
 func nvdCacheDirectory() (string, error) {
 	if override := strings.TrimSpace(os.Getenv("SNARE_CACHE_DIR")); override != "" {
 		return override, nil
@@ -1172,8 +1154,8 @@ func persistNVDThrottleStateLocked() {
 	writeCacheFileAtomic(dir, path, raw)
 }
 
-// reserveNVDRequest reserves a request slot without waiting. A crowded public
-// API budget should reduce enrichment completeness, not stop the whole scan.
+// reserveNVDRequest claims a slot without waiting. A busy public budget should
+// cost some enrichment, not stop the whole scan.
 func reserveNVDRequest() error {
 	nvdRateState.Lock()
 	defer nvdRateState.Unlock()
@@ -1225,14 +1207,13 @@ func recordNVDThrottle(status int, retryAfter string, body []byte) time.Duration
 			delay = 30 * time.Second
 		}
 	case status == http.StatusServiceUnavailable:
-		// Honor explicit maintenance/backoff instructions from NVD. If absent,
-		// use a short cooldown rather than immediately re-hitting a troubled API.
+		// Use NVD's backoff if it sent one, otherwise a short cooldown.
 		if delay <= 0 {
 			delay = 15 * time.Second
 		}
 	case status == http.StatusForbidden:
-		// NVD may use 403 for a firewall block or rejected API key. Cool down
-		// briefly either way to avoid hammering the endpoint while diagnosing it.
+		// 403 can mean a firewall block or a rejected API key. Cool down either
+		// way instead of hammering an endpoint that is already refusing us.
 		if delay <= 0 {
 			delay = time.Minute
 		}
@@ -1256,7 +1237,7 @@ func recordNVDThrottle(status int, retryAfter string, body []byte) time.Duration
 	return delay
 }
 
-// resetNVDThrottleForTest clears process state. It is intentionally unexported.
+// resetNVDThrottleForTest clears process state so tests start clean.
 func resetNVDThrottleForTest() {
 	nvdRateState.Lock()
 	nvdRateState.nextAllowed = time.Time{}
@@ -1278,10 +1259,8 @@ type offlineCVERule struct {
 	summary         string
 }
 
-// These records are a small offline fallback, not a replacement for a current
-// CVE database. Version ranges follow the cited upstream CVE records. Runtime
-// package backports (especially RHEL/CentOS) and config-dependent applicability
-// cannot be inferred from a banner, so every fallback result is labelled.
+// A small offline fallback, not a CVE database. Ranges follow the cited upstream
+// records; distro backports and config-dependent cases can't be read from a banner.
 var bundledOfflineRules = []offlineCVERule{
 	{"apache", "http_server", "2.4.0", "2.4.27", "CVE-2017-9798", "HIGH", 7.5, "OptionsBleed: memory disclosure in the HTTP OPTIONS method"},
 	{"apache", "http_server", "2.4.0", "2.4.25", "CVE-2017-7679", "HIGH", 7.5, "mod_mime buffer over-read vulnerability"},
@@ -1312,7 +1291,7 @@ func offlineFallbackCVEs(vendor, product, version string) []CVEInfo {
 			ID:         rule.id,
 			Severity:   rule.severity,
 			CVSS:       rule.cvss,
-			HasPoC:     false, // never infer exploit availability from a CVE title
+			HasPoC:     false, // never inferred from a CVE title
 			Summary:    rule.summary,
 			References: []string{"https://nvd.nist.gov/vuln/detail/" + rule.id},
 		})
@@ -1409,7 +1388,7 @@ func getProductCVEs(vendor, product string) ([]circlRecord, error) {
 	cveCache.Lock()
 	call.records = records
 	call.err = err
-	// Keep the per-process cache bounded during very large target scans.
+	// Keep the per-process cache bounded on very large scans.
 	now = time.Now()
 	if len(cveCache.entries) >= maxCVECacheEntries {
 		for cachedKey, entry := range cveCache.entries {
@@ -1491,10 +1470,8 @@ func fetchCIRCLRecords(ctx context.Context, endpoint string) ([]circlRecord, err
 		return nil, fmt.Errorf("response exceeded %d bytes", maxCVEResponseBytes)
 	}
 
-	// CIRCL's public API has evolved from the legacy top-level array to
-	// envelopes whose `results` field can be either an array or an object keyed
-	// by CVE ID. Decode collections dynamically rather than binding `results`
-	// to []circlRecord: that exact assumption caused the v1.6.5 lookup failure.
+	// CIRCL has used several result shapes: a top-level array, envelopes, and maps
+	// keyed by CVE ID. Decode dynamically instead of binding results to []circlRecord.
 	records, recognized, decodeErr := decodeCIRCLRecords(body)
 	if decodeErr != nil {
 		return nil, fmt.Errorf("decode JSON: %w", decodeErr)
@@ -1505,10 +1482,8 @@ func fetchCIRCLRecords(ctx context.Context, endpoint string) ([]circlRecord, err
 	return records, nil
 }
 
-// decodeCIRCLRecords accepts both legacy CVE-Search arrays and newer
-// Vulnerability-Lookup response envelopes. In the newer shape, `results` may
-// be an object containing nested arrays or a map keyed by CVE identifier.
-// `recognized` distinguishes a legitimate empty result from an unknown schema.
+// decodeCIRCLRecords accepts legacy arrays and newer Vulnerability-Lookup
+// envelopes. `recognized` separates an empty result from an unknown schema.
 func decodeCIRCLRecords(body []byte) ([]circlRecord, bool, error) {
 	return decodeCIRCLCollection(json.RawMessage(body), 0, "")
 }
@@ -1530,10 +1505,8 @@ func decodeCIRCLCollection(raw json.RawMessage, depth int, fallbackID string) ([
 		}
 		records := make([]circlRecord, 0, len(items))
 		for _, item := range items {
-			// Current Vulnerability-Lookup responses contain CVE List V5 records
-			// as ["cve-2025-12345", {"dataType":"CVE_RECORD", ...}] tuples
-			// inside results.cvelistv5. The old decoder treated each tuple as a
-			// record and silently discarded the entire modern data set.
+			// Vulnerability-Lookup nests CVE List V5 records as [id, record]
+			// tuples inside results.cvelistv5.
 			if record, ok := decodeCIRCLRecordTuple(item); ok {
 				records = append(records, record)
 				continue
@@ -1577,9 +1550,8 @@ func decodeCIRCLCollection(raw json.RawMessage, depth int, fallbackID string) ([
 			return []circlRecord{record}, true, nil
 		}
 
-		// Newer wrappers can represent results as {"CVE-...": {record}, ...}.
-		// Sort keys for deterministic ordering and copy a CVE ID from the key
-		// only when the record itself does not carry an identifier.
+		// Newer wrappers key results by CVE ID. Sort the keys for stable output and
+		// use a key as the record ID only when the record has none.
 		keys := make([]string, 0, len(object))
 		for key := range object {
 			keys = append(keys, key)
@@ -1607,8 +1579,8 @@ func decodeCIRCLCollection(raw json.RawMessage, depth int, fallbackID string) ([
 	}
 }
 
-// decodeCIRCLRecordTuple parses CVE List V5 [identifier, record] pairs used
-// by the current CIRCL Vulnerability-Lookup `results.cvelistv5` response.
+// decodeCIRCLRecordTuple parses the [identifier, record] pairs used by the
+// results.cvelistv5 response.
 func decodeCIRCLRecordTuple(raw json.RawMessage) (circlRecord, bool) {
 	var tuple []json.RawMessage
 	if err := json.Unmarshal(raw, &tuple); err != nil || len(tuple) < 2 {
@@ -1755,7 +1727,7 @@ func walkAffectedValue(value any, vendor, product, version string) bool {
 						if version == entryVersion {
 							return true
 						}
-						// CVE 5 records frequently describe a half-open interval as
+						// CVE 5 records often write a half-open interval as
 						// version=<lower bound>, lessThan=<upper bound>.
 						if lessThan != "" && versionInRange(version, entryVersion, "", "", lessThan) {
 							return true
@@ -1805,8 +1777,8 @@ func cpeAffectsVersion(config cpeConfig, vendor, product, version string) bool {
 	if config.VersionStartIncluding != "" || config.VersionStartExcluding != "" || config.VersionEndIncluding != "" || config.VersionEndExcluding != "" {
 		return versionInRange(version, config.VersionStartIncluding, config.VersionStartExcluding, config.VersionEndIncluding, config.VersionEndExcluding)
 	}
-	// A wildcard CPE is not proof that every version is affected. Require an
-	// explicit affected range or exact version to avoid product-wide false positives.
+	// A wildcard CPE doesn't prove every version is affected, so require an
+	// explicit range or exact version.
 	if cpeVersion == "*" || cpeVersion == "-" || cpeVersion == "" {
 		return false
 	}
@@ -1872,10 +1844,8 @@ func versionInRange(version, startIncluding, startExcluding, endIncluding, endEx
 	return true
 }
 
-// compareVersions is a conservative, dependency-free comparator suitable for
-// common dotted software versions and simple prerelease suffixes. It is not a
-// replacement for every ecosystem's version rules; CPE range metadata still
-// depends on the upstream source being accurate.
+// compareVersions handles common dotted versions and simple prerelease suffixes.
+// It is not full semver, and CPE ranges are only as good as the upstream data.
 func compareVersions(a, b string) int {
 	a = normalizeVersionForCompare(a)
 	b = normalizeVersionForCompare(b)
@@ -2015,8 +1985,8 @@ func normalizeTech(rawName string) (string, string) {
 		return "", ""
 	}
 
-	// These are technology labels/features, not independently versioned
-	// software products. Don't send them to the CVE APIs as fabricated CPEs.
+	// Technology labels, not versioned products. Don't send them to the CVE APIs
+	// as made-up CPEs.
 	switch name {
 	case "basic", "hsts", "http/2", "http/3", "ipv6", "ssl", "tls",
 		"jsdelivr", "jquery cdn", "amazon alb", "amazon cloudfront",
@@ -2030,8 +2000,8 @@ func normalizeTech(rawName string) (string, string) {
 		return "apache", "tomcat"
 	case name == "mod_ssl", strings.HasPrefix(name, "mod_ssl "),
 		name == "apache mod_ssl", name == "apache http server mod_ssl":
-		// mod_ssl is an Apache module, not a standalone CVE product. Wappalyzer
-		// sometimes reports the Apache version under this module's name.
+		// mod_ssl is an Apache module, not a standalone product. Wappalyzer
+		// sometimes reports the Apache version under this name.
 		return "apache", "http_server"
 	case name == "apache", name == "httpd", name == "apache http server", name == "apache httpd", name == "apache http server (httpd)":
 		return "apache", "http_server"
@@ -2073,11 +2043,8 @@ func normalizeTech(rawName string) (string, string) {
 		return "apache", "struts"
 	}
 
-	// Wappalyzer contains hundreds of product names, so don't fail closed for
-	// every technology we have not curated yet. Use a conservative CPE-ish slug
-	// as a best-effort NVD/CIRCL candidate, but never allow characters that
-	// could alter a URL path or a CPE component. If it cannot be represented,
-	// report PRODUCT UNMAPPED rather than LOOKUP UNAVAILABLE.
+	// Uncurated Wappalyzer products get a conservative CPE slug, with characters
+	// that could alter a URL or CPE stripped. If nothing is left, report PRODUCT UNMAPPED.
 	clean := strings.NewReplacer(" ", "_", "/", "_", "\\", "_", ":", "_", "?", "", "#", "").Replace(name)
 	clean = strings.Trim(clean, "_.-")
 	if clean == "" || !cpeComponentRE.MatchString(clean) {
@@ -2140,8 +2107,8 @@ func extractReferences(raws ...json.RawMessage) []string {
 				}
 			}
 		}
-		// The legacy API places references at the root; newer CVE records nest
-		// them under containers.cna.references.
+		// Legacy records put references at the root; newer ones nest them under
+		// containers.cna.references.
 		walk(value, index == 0)
 	}
 	return references

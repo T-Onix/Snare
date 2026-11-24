@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 )
 
-// Catppuccin 24-bit TrueColor ANSI Escape Codes
+// Catppuccin palette as 24-bit ANSI escapes.
 const (
 	ColorReset    = "\x1b[0m"
 	ColorBold     = "\x1b[1m"
@@ -215,10 +215,8 @@ func renderTargetCard(targetURL string, results []TechResult) {
 		}
 	}
 
-	// A provider error, URL, CVE description, or even a single unbroken token
-	// can be longer than the card. Wrap the final composed rows (not only CVE
-	// summaries) so every printed line stays inside the border. This is the
-	// final guard against regressions when a new provider adds longer messages.
+	// Wrap the final composed rows, not just CVE summaries, so a long URL or
+	// provider error can never push text past the border.
 	wrappedLines := make([]string, 0, len(uiLines))
 	for _, line := range uiLines {
 		if line == "DIVIDER" {
@@ -302,9 +300,8 @@ type displayWord struct {
 	width  int
 }
 
-// wrapANSI wraps fully formatted UI lines using terminal-cell width rather
-// than byte count. ANSI SGR styles have zero width and are restored after line
-// breaks; oversized words/URLs are split too, so nothing can escape the card.
+// wrapANSI wraps by terminal cell width instead of byte count, restores ANSI
+// styles after each break, and splits oversized words so nothing escapes the card.
 func wrapANSI(text string, maxWidth int) []string {
 	if maxWidth < 1 {
 		maxWidth = 1
@@ -386,8 +383,8 @@ func wrapANSI(text string, maxWidth int) []string {
 			if lineWidth+spaceWidth+word.width > maxWidth && lineHasWord {
 				flushLine()
 			}
-			// A wide word may fit a fresh row but not fit after the continuation
-			// indent. Remove that indent rather than allowing the border to drift.
+			// A wide word may fit a fresh row but not after the continuation
+			// indent. Drop the indent rather than let the border drift.
 			if !lineHasWord && lineWidth > 0 && lineWidth+word.width > maxWidth {
 				line.Reset()
 				line.WriteString(activeStyle)
@@ -403,8 +400,8 @@ func wrapANSI(text string, maxWidth int) []string {
 			continue
 		}
 
-		// Long unbroken words (most often URLs or provider diagnostics) need
-		// character-level splitting. Start them on a fresh line when possible.
+		// Long unbroken words (usually URLs or provider errors) need splitting
+		// character by character. Start them on a fresh line when possible.
 		if lineHasWord {
 			flushLine()
 		} else if lineWidth > 0 {
@@ -504,10 +501,9 @@ func wrapWords(text string, maxLen int) []string {
 	return lines
 }
 
-// runeWidth calculates the visual display width of a Unicode character in terminal monospace fonts
+// runeWidth returns how many terminal cells a rune takes in a monospace font.
 func runeWidth(r rune) int {
-	// Combining marks, variation selectors, and the zero-width joiner do not
-	// consume a terminal cell on their own.
+	// Combining marks, variation selectors, and the zero-width joiner take no cell.
 	if unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Me, r) || r == 0x200D ||
 		(r >= 0xFE00 && r <= 0xFE0F) || (r >= 0xE0100 && r <= 0xE01EF) ||
 		(r >= 0x1F3FB && r <= 0x1F3FF) {
@@ -534,7 +530,7 @@ func runeWidth(r rune) int {
 	return 1
 }
 
-// visibleLength calculates exact visual width in terminal cells, ignoring ANSI escape codes
+// visibleLength counts terminal cells, ignoring ANSI escapes.
 func visibleLength(s string) int {
 	clean := ansiRegex.ReplaceAllString(s, "")
 	width := 0

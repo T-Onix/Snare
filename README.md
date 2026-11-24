@@ -88,7 +88,8 @@ Flags:
     	File containing list of targets
   -json
     	Output results as structured JSON lines
-  -k	Skip TLS certificate verification (use only when required)
+  -k
+    	Skip TLS certificate verification (use only when required)
   -no-banner
     	Disable startup ASCII banner
   -o string
@@ -97,15 +98,11 @@ Flags:
     	Number of retries for failed target requests (default 2)
   -sc string
     	Comma-separated list of specific CVEs to scan for (e.g. 'CVE-2021-41773,CVE-2014-0160')
-  -specific-cves string
-    	Comma-separated list of specific CVEs to scan for
   -t string
     	Manual technology & version lookup (e.g. nextjs:1.2.3 or apache:2.4.49)
   -update
     	Update SNARE to the latest version via go install
   -vo
-    	Only display targets with version-matched CVEs (shorthand)
-  -vuln-only
     	Only display targets with version-matched CVEs
 ```
 
